@@ -1,0 +1,9 @@
+jax[cpu]
+flax
+optax
+numpy
+matplotlib
+tqdm
+tiktoken
+ipykernel
+jupyter
