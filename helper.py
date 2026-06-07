@@ -107,8 +107,18 @@ class MiniGPT(nnx.Module):
 
         return logits
 
-def generate_text(model, start_tokens, max_new_tokens=50, temperature=1.0):
+def generate_text(
+    model,
+    start_tokens,
+    max_new_tokens=50,
+    temperature=0.8,
+    seed=0,
+    top_k=40,
+    repetition_penalty=1.2,
+):
     tokens = list(start_tokens)
+    rng = jax.random.key(seed)
+    end_token = tokenizer.encode('<|endoftext|>', allowed_special={'<|endoftext|>'})[0]
 
     for _ in range(max_new_tokens):
         context = tokens[-model.maxlen:]
@@ -121,11 +131,26 @@ def generate_text(model, start_tokens, max_new_tokens=50, temperature=1.0):
         context_array = jnp.array(context)[None, :]
         logits = model(context_array)
 
-        next_token_logits = logits[0, actual_len - 1, :] / temperature
+        next_token_logits = logits[0, actual_len - 1, :]
 
-        next_token = int(jnp.argmax(next_token_logits))
+        if tokens and repetition_penalty > 1.0:
+            recent_tokens = jnp.array(tokens[-32:], dtype=jnp.int32)
+            next_token_logits = next_token_logits.at[recent_tokens].add(
+                -jnp.log(jnp.array(repetition_penalty, dtype=next_token_logits.dtype))
+            )
 
-        if next_token == tokenizer.encode('<|endoftext|>', allowed_special={'<|endoftext|>'})[0]:
+        next_token_logits = next_token_logits / max(float(temperature), 1e-6)
+
+        if top_k is not None and top_k > 0:
+            values, indices = jax.lax.top_k(next_token_logits, min(top_k, next_token_logits.shape[-1]))
+            rng, step_rng = jax.random.split(rng)
+            sampled_index = int(jax.random.categorical(step_rng, values))
+            next_token = int(indices[sampled_index])
+        else:
+            rng, step_rng = jax.random.split(rng)
+            next_token = int(jax.random.categorical(step_rng, next_token_logits))
+
+        if next_token == end_token:
             break
 
         tokens.append(next_token)
@@ -134,9 +159,15 @@ def generate_text(model, start_tokens, max_new_tokens=50, temperature=1.0):
 
 
 
-def generate_story(model, story_prompt, temperature, max_new_tokens):
+def generate_story(model, story_prompt, temperature=0.8, max_new_tokens=80, seed=0):
     start_tokens = tokenizer.encode(story_prompt)[:maxlen]
-    generated = generate_text(model, start_tokens, max_new_tokens=max_new_tokens, temperature=temperature)
+    generated = generate_text(
+        model,
+        start_tokens,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        seed=seed,
+    )
     return generated
 
 
